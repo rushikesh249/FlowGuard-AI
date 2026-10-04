@@ -1,0 +1,16 @@
+fastapi==0.110.0
+uvicorn==0.28.0
+sqlalchemy
+psycopg2-binary
+alembic
+bcrypt==4.0.1
+passlib[bcrypt]
+python-jose[cryptography]
+pydantic-settings
+python-multipart
+email-validator
+pm4py
+pandas
+scikit-learn
+celery
+redis
