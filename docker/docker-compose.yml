@@ -1,0 +1,100 @@
+version: "3.8"
+
+services:
+  # ── PostgreSQL Database ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: flowguard
+      POSTGRES_PASSWORD: flowguard
+      POSTGRES_DB: flowguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (message broker for Celery) ──────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://flowguard:flowguard@postgres:5432/flowguard
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: flowguard-dev-secret-change-in-production
+    volumes:
+      - ../backend/datasets:/app/datasets
+      - ai_models:/app/ai/models
+      - ai_results:/app/ai/results
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Celery Worker (background anomaly detection) ───────────────────────────
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: celery -A celery_app.celery_app worker --loglevel=info --concurrency=1
+    environment:
+      DATABASE_URL: postgresql://flowguard:flowguard@postgres:5432/flowguard
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: flowguard-dev-secret-change-in-production
+    volumes:
+      - ../backend/datasets:/app/datasets
+      - ai_models:/app/ai/models
+      - ai_results:/app/ai/results
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Wait for the backend so its entrypoint finishes the Alembic
+      # migrations before the worker starts (avoids a migration race).
+      backend:
+        condition: service_healthy
+
+  # ── Next.js Frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  ai_models:
+  ai_results:
